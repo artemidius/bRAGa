@@ -15,8 +15,11 @@
 //! [`braga_embedder::Embedder`], and stores each vector with
 //! [`Store::insert_embedding`](braga_storage::Store::insert_embedding). [`retrieval`] is its query
 //! counterpart: a `vec0` KNN and an FTS5 keyword search fused with reciprocal rank fusion.
+//! [`doctor`] verifies the stack's claims end to end and reports machine-readable pass/fail per
+//! check.
 
 pub mod config;
+pub mod doctor;
 pub mod embedding;
 pub mod retrieval;
 pub mod scanner;
