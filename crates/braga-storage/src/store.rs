@@ -4,7 +4,7 @@
 
 use std::{io, path::Path, sync::Once};
 
-use rusqlite::{Connection, ffi, params};
+use rusqlite::{Connection, OptionalExtension as _, ffi, params};
 use thiserror::Error;
 
 use crate::{
@@ -80,6 +80,18 @@ pub enum StoreError {
         /// `SQLite` extended result code, or `-1` for a non-`SQLite` `rusqlite` error.
         code: i32,
     },
+    /// A `model_registry` row already exists with a different `dim` or `metric` (pin violated).
+    #[error("model `{model}` is pinned to a different dim or metric")]
+    ModelConflict {
+        /// The model whose registered shape differs from the requested one.
+        model: String,
+    },
+    /// `dim` is zero/out of range or `metric` is not one of `cosine` | `l2` | `ip`.
+    #[error("invalid vec0 parameter: {parameter}")]
+    InvalidVec0Parameter {
+        /// The rejected parameter name (`dim` or `metric`).
+        parameter: &'static str,
+    },
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -139,6 +151,21 @@ pub struct NewChunk<'a> {
 /// It is not implemented here; `braga-extra` defines the rotation contract first.
 pub struct Store {
     conn: Connection,
+}
+
+/// Validates the `vec0` dimension and distance metric accepted by
+/// [`Store::ensure_embedding_table`].
+///
+/// `1..=16384` is the documented width bound; the metric names are the frozen public set, which
+/// this crate validates even though the pinned `sqlite-vec` implements only `l2` and `cosine`.
+fn validate_vec0_parameter(dim: u32, metric: &str) -> Result<(), StoreError> {
+    if !(1..=16384).contains(&dim) {
+        return Err(StoreError::InvalidVec0Parameter { parameter: "dim" });
+    }
+    match metric {
+        "cosine" | "l2" | "ip" => Ok(()),
+        _ => Err(StoreError::InvalidVec0Parameter { parameter: "metric" }),
+    }
 }
 
 impl Store {
@@ -260,6 +287,141 @@ impl Store {
         )?;
         transaction.execute("DELETE FROM files WHERE id = ?1", [id])?;
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Reads the registered `(dim, metric)` for `model`, if any.
+    ///
+    /// The registry row is the authoritative vector shape once a model has been used, so a fresh
+    /// process can recover the dimension that its adapter has not learned yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Backend`] if `SQLite` rejects the query.
+    pub fn registered_model(&self, model: &str) -> Result<Option<(u32, String)>, StoreError> {
+        self.conn
+            .query_row("SELECT dim, metric FROM model_registry WHERE model = ?1", [model], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    /// Registers `(model, dim, metric)` on first use, failing closed if the model is already
+    /// pinned to a different shape.
+    ///
+    /// The insert is `ON CONFLICT(model) DO NOTHING`, followed by a re-read: the identical row is
+    /// idempotent, while any `dim` or `metric` mismatch returns [`StoreError::ModelConflict`]. This
+    /// is the per-collection shape guard: a later configuration change fails instead of silently
+    /// mixing vector widths in one dimension's table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::ModelConflict`] when the model is pinned to a different `dim` or
+    /// `metric`, and [`StoreError::Backend`] if `SQLite` rejects the statement.
+    pub fn register_model(&self, model: &str, dim: u32, metric: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO model_registry (model, dim, metric) VALUES (?1, ?2, ?3)
+             ON CONFLICT(model) DO NOTHING",
+            params![model, dim, metric],
+        )?;
+        match self.registered_model(model)? {
+            Some((registered_dim, registered_metric))
+                if registered_dim == dim && registered_metric == metric =>
+            {
+                Ok(())
+            }
+            _ => Err(StoreError::ModelConflict { model: model.to_owned() }),
+        }
+    }
+
+    /// Lazily creates the per-dimension `vec0` virtual table, if absent.
+    ///
+    /// `vec0` fixes the vector width and distance metric in the `CREATE`, so the table is a
+    /// runtime artifact of [`model_registry`](Self::registered_model) rather than a migration.
+    /// The call is idempotent because of `IF NOT EXISTS`.
+    ///
+    /// `ip` is accepted as a valid metric parameter for the frozen public API, but the pinned
+    /// `sqlite-vec` 0.1.9 implements only `l2` and `cosine`; creating an `ip` table therefore fails
+    /// closed with [`StoreError::Backend`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::InvalidVec0Parameter`] when `dim` is outside `1..=16384` or `metric`
+    /// is not `cosine`, `l2`, or `ip`, and [`StoreError::Backend`] if `SQLite` rejects the DDL.
+    pub fn ensure_embedding_table(&self, dim: u32, metric: &str) -> Result<(), StoreError> {
+        validate_vec0_parameter(dim, metric)?;
+        self.conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS \"embeddings_d{dim}\" USING vec0(
+                 embedding FLOAT[{dim}] distance_metric={metric},
+                 +chunk_id BLOB,
+                 +model TEXT,
+                 +dim INTEGER
+             )"
+        ))?;
+        Ok(())
+    }
+
+    /// Cache lookup: does `chunk_id` already have an embedding for `(model, dim)`?
+    ///
+    /// The key is `(chunk_id, model, dim)`: `chunk_id` is the `SHA-256` of the chunk bytes, so a
+    /// tokenizer change never invalidates a cached vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Backend`] if `SQLite` rejects the query or the table does not exist.
+    pub fn embedding_exists(
+        &self,
+        model: &str,
+        dim: u32,
+        chunk_id: &[u8],
+    ) -> Result<bool, StoreError> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM \"embeddings_d{dim}\"
+                         WHERE chunk_id = ?1 AND model = ?2 AND dim = ?3
+                     )"
+                ),
+                params![chunk_id, model, dim],
+                |row| row.get(0),
+            )
+            .map_err(StoreError::from)
+    }
+
+    /// Inserts one embedding, resolving `chunks.rowid` from the content hash internally.
+    ///
+    /// The vector is bound as little-endian `f32` bytes through `vec_f32`, so no JSON crosses the
+    /// `braga-storage` boundary. The `vec0` rowid equals `chunks.rowid`, the documented join key.
+    ///
+    /// An unknown `chunk_id` fails closed with [`StoreError::Backend`] *before* the insert:
+    /// `sqlite-vec` 0.1.9 auto-assigns a rowid for a `NULL` one, which would otherwise create an
+    /// embedding that cannot join back to its chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Backend`] when the chunk is unknown, the vector width does not match
+    /// the table, or `SQLite` rejects the insert.
+    pub fn insert_embedding(
+        &self,
+        chunk_id: &[u8],
+        model: &str,
+        dim: u32,
+        vector: &[f32],
+    ) -> Result<(), StoreError> {
+        let rowid: i64 =
+            self.conn.query_row("SELECT rowid FROM chunks WHERE id = ?1", [chunk_id], |row| {
+                row.get(0)
+            })?;
+        let bytes: Vec<u8> = vector.iter().flat_map(|value| value.to_le_bytes()).collect();
+        self.conn.execute(
+            &format!(
+                "INSERT INTO \"embeddings_d{dim}\" (rowid, embedding, chunk_id, model, dim)
+                 VALUES (?1, vec_f32(?2), ?3, ?4, ?5)"
+            ),
+            params![rowid, bytes, chunk_id, model, dim],
+        )?;
         Ok(())
     }
 

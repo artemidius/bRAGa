@@ -12,6 +12,7 @@ description.workspace = true
 
 [dependencies]
 braga-chunker = { path = "../braga-chunker" }
+braga-embedder = { path = "../braga-embedder" }
 braga-storage = { path = "../braga-storage" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

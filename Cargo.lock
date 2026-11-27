@@ -34,6 +34,7 @@ name = "braga"
 version = "0.1.0"
 dependencies = [
  "braga-chunker",
+ "braga-embedder",
  "braga-storage",
  "rusqlite",
  "serde",
