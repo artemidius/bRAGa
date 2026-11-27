@@ -71,6 +71,8 @@ impl Config {
     /// | `BRAGA_TOML` | path to a `braga.toml` file |
     /// | `BRAGA_CONFIG` | inline `TOML` document |
     /// | `BRAGA_SCAN__DIR` | `scan.dir` |
+    /// | `BRAGA_SCAN__AUTO_SCAN` | `scan.auto_scan` |
+    /// | `BRAGA_SCAN__INTERVAL_SECS` | `scan.interval_secs` |
     /// | `BRAGA_EMBEDDING__PROVIDER` | `embedding.provider` |
     /// | `BRAGA_EMBEDDING__URL` | `embedding.url` |
     /// | `BRAGA_EMBEDDING__MODEL` | `embedding.model` |
@@ -170,12 +172,36 @@ fn resolve_from_env(
 pub struct Scan {
     /// Directory that is scanned for documents.
     pub dir: PathBuf,
+    /// Whether the worker periodically re-reconciles on its own (`true`) or only on start and on
+    /// [`ScanEngine::update`](crate::status::ScanEngine::update) (`false`).
+    #[serde(default = "default_auto_scan")]
+    pub auto_scan: bool,
+    /// Seconds between periodic reconciles when [`auto_scan`](Self::auto_scan) is `true`.
+    ///
+    /// `0` is rejected at engine start while `auto_scan` is `true` (see
+    /// [`crate::status::ScanEngine::start`]).
+    #[serde(default = "default_interval_secs")]
+    pub interval_secs: u64,
 }
 
 impl Default for Scan {
     fn default() -> Self {
-        Self { dir: PathBuf::from(".") }
+        Self {
+            dir: PathBuf::from("."),
+            auto_scan: default_auto_scan(),
+            interval_secs: default_interval_secs(),
+        }
     }
+}
+
+/// Default `scan.auto_scan`: `true`.
+fn default_auto_scan() -> bool {
+    true
+}
+
+/// Default `scan.interval_secs`: `300`.
+fn default_interval_secs() -> u64 {
+    300
 }
 
 /// Embedding provider settings (`[embedding]`).
@@ -240,6 +266,12 @@ impl PartialConfig {
         if let Some(dir) = self.scan.dir {
             config.scan.dir = dir;
         }
+        if let Some(auto_scan) = self.scan.auto_scan {
+            config.scan.auto_scan = auto_scan;
+        }
+        if let Some(interval_secs) = self.scan.interval_secs {
+            config.scan.interval_secs = interval_secs;
+        }
         if let Some(provider) = self.embedding.provider {
             config.embedding.provider = provider;
         }
@@ -261,6 +293,10 @@ impl PartialConfig {
 struct PartialScan {
     /// Optional `scan.dir`.
     dir: Option<PathBuf>,
+    /// Optional `scan.auto_scan`.
+    auto_scan: Option<bool>,
+    /// Optional `scan.interval_secs`.
+    interval_secs: Option<u64>,
 }
 
 /// Partial `[embedding]` table.
@@ -311,6 +347,16 @@ fn apply_env_leaf(
     }
     match (section, field) {
         ("SCAN", "DIR") => leaves.scan.dir = Some(PathBuf::from(value)),
+        ("SCAN", "AUTO_SCAN") => {
+            leaves.scan.auto_scan = Some(value.parse().map_err(|_| {
+                ConfigError::InvalidEnvValue { key: key.to_owned(), value: value.to_owned() }
+            })?);
+        }
+        ("SCAN", "INTERVAL_SECS") => {
+            leaves.scan.interval_secs = Some(value.parse().map_err(|_| {
+                ConfigError::InvalidEnvValue { key: key.to_owned(), value: value.to_owned() }
+            })?);
+        }
         ("EMBEDDING", "PROVIDER") => leaves.embedding.provider = Some(value.to_owned()),
         ("EMBEDDING", "URL") => leaves.embedding.url = Some(value.to_owned()),
         ("EMBEDDING", "MODEL") => leaves.embedding.model = Some(value.to_owned()),
@@ -349,6 +395,18 @@ pub enum ConfigError {
     /// A recognized `BRAGA_`-prefixed variable is malformed or names an unknown leaf.
     #[error("invalid environment variable `{0}`")]
     InvalidEnvVar(String),
+    /// A recognized leaf variable held a value that cannot be parsed for its field type.
+    #[error("invalid value `{value}` for environment variable `{key}`")]
+    InvalidEnvValue {
+        /// The variable name, including the `BRAGA_` prefix.
+        key: String,
+        /// The unparsable value, as supplied.
+        value: String,
+    },
+    /// `scan.auto_scan` is `true` but `scan.interval_secs` is `0`, so no periodic trigger is
+    /// possible.
+    #[error("auto_scan requires a non-zero scan.interval_secs")]
+    InvalidScanInterval,
 }
 
 #[cfg(test)]
@@ -391,7 +449,12 @@ mod tests {
     #[test]
     fn defaults_are_the_documented_values() {
         let config = Config::default();
-        assert_eq!(config.scan, Scan { dir: PathBuf::from(".") });
+        assert_eq!(
+            config.scan,
+            Scan { dir: PathBuf::from("."), auto_scan: true, interval_secs: 300 }
+        );
+        assert!(config.scan.auto_scan);
+        assert_eq!(config.scan.interval_secs, 300);
         assert_eq!(config.embedding, Embedding::default());
         assert_eq!(config.embedding.provider, "");
         assert_eq!(config.embedding.url, "");
@@ -428,6 +491,16 @@ mod tests {
                 name: "scan.dir",
                 env: &[("BRAGA_SCAN__DIR", "/srv/docs")],
                 mutate: |config| config.scan.dir = PathBuf::from("/srv/docs"),
+            },
+            EnvCase {
+                name: "scan.auto_scan",
+                env: &[("BRAGA_SCAN__AUTO_SCAN", "false")],
+                mutate: |config| config.scan.auto_scan = false,
+            },
+            EnvCase {
+                name: "scan.interval_secs",
+                env: &[("BRAGA_SCAN__INTERVAL_SECS", "60")],
+                mutate: |config| config.scan.interval_secs = 60,
             },
             EnvCase {
                 name: "embedding.provider",
@@ -468,17 +541,23 @@ mod tests {
             r#"
                 [scan]
                 dir = "/file-dir"
+                auto_scan = true
+                interval_secs = 60
 
                 [embedding]
                 provider = "file-provider"
                 model = "file-model"
             "#,
         );
-        let explicit =
-            write_temp_config("precedence-explicit", "[embedding]\nmodel = \"explicit-model\"\n");
-        let inline = "[embedding]\nprovider = \"inline-provider\"\n";
+        let explicit = write_temp_config(
+            "precedence-explicit",
+            "[scan]\ninterval_secs = 240\n\n[embedding]\nmodel = \"explicit-model\"\n",
+        );
+        let inline = "[scan]\ninterval_secs = 120\n\n[embedding]\nprovider = \"inline-provider\"\n";
         let env = vec![
             ("BRAGA_SCAN__DIR".to_owned(), "/leaf-dir".to_owned()),
+            ("BRAGA_SCAN__AUTO_SCAN".to_owned(), "false".to_owned()),
+            ("BRAGA_SCAN__INTERVAL_SECS".to_owned(), "30".to_owned()),
             ("BRAGA_EMBEDDING__PROVIDER".to_owned(), "leaf-provider".to_owned()),
             ("BRAGA_EMBEDDING__URL".to_owned(), "leaf-url".to_owned()),
             ("BRAGA_TOML".to_owned(), file.display().to_string()),
@@ -492,10 +571,71 @@ mod tests {
 
         let mut expected = Config::default();
         expected.scan.dir = PathBuf::from("/file-dir"); // BRAGA_TOML > leaf > default
+        expected.scan.auto_scan = true; // BRAGA_TOML > leaf
+        expected.scan.interval_secs = 240; // explicit > BRAGA_CONFIG > file > leaf
         expected.embedding.provider = "inline-provider".to_owned(); // BRAGA_CONFIG > file > leaf
         expected.embedding.url = "leaf-url".to_owned(); // leaf wins; higher layers are silent
         expected.embedding.model = "explicit-model".to_owned(); // explicit > file > default
         assert_eq!(resolved.expect("layers should resolve"), expected);
+    }
+
+    #[test]
+    fn malformed_leaf_values_fail_closed() {
+        let cases = [
+            ("BRAGA_SCAN__AUTO_SCAN", "yes"),
+            ("BRAGA_SCAN__AUTO_SCAN", "1"),
+            ("BRAGA_SCAN__AUTO_SCAN", ""),
+            ("BRAGA_SCAN__INTERVAL_SECS", "-1"),
+            ("BRAGA_SCAN__INTERVAL_SECS", "abc"),
+            ("BRAGA_SCAN__INTERVAL_SECS", "18446744073709551616"),
+        ];
+
+        for (key, value) in cases {
+            let result = resolve_env(&[(key, value)], None);
+            let Err(error) = result else {
+                panic!("{key}={value} must fail closed");
+            };
+            assert!(
+                matches!(&error, ConfigError::InvalidEnvValue { key: name, .. } if name == key),
+                "{key}={value}: unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_scan_deserialize_uses_field_defaults() {
+        let scan: Scan = toml::from_str("dir = \"/x\"").expect("partial scan should parse");
+
+        assert!(scan.auto_scan, "a named dir must not flip auto_scan to false");
+        assert_eq!(scan.interval_secs, 300, "a named dir must not zero interval_secs");
+    }
+
+    #[test]
+    fn invalid_scan_interval_fails_closed_at_start() {
+        use braga_storage::{Key, Store};
+
+        use crate::status::ScanEngine;
+
+        let root = tempfile::tempdir().expect("create scan root");
+        let db_dir = tempfile::tempdir().expect("create database directory");
+        let key = Key::from_bytes([0x6B; 32]);
+        let db = db_dir.path().join("braga.sqlite3");
+
+        let mut config = Config::default();
+        config.scan.dir = root.path().to_path_buf();
+        config.scan.auto_scan = true;
+        config.scan.interval_secs = 0;
+
+        let store = Store::open(&db, &key).expect("open store");
+        let error =
+            ScanEngine::start(config.clone(), store).expect_err("a zero interval must fail closed");
+        assert!(matches!(error, ConfigError::InvalidScanInterval));
+
+        config.scan.auto_scan = false;
+        let store = Store::open(&db, &key).expect("reopen store");
+        let engine =
+            ScanEngine::start(config, store).expect("manual-only scans ignore the interval");
+        engine.stop();
     }
 
     #[test]
@@ -618,6 +758,14 @@ mod tests {
             assert!(rendered.contains(table), "default TOML is missing {table}:\n{rendered}");
         }
         assert!(rendered.contains("dir = \".\""), "scan.dir should serialize as '.':\n{rendered}");
+        assert!(
+            rendered.contains("auto_scan = true"),
+            "scan.auto_scan should serialize as true:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("interval_secs = 300"),
+            "scan.interval_secs should serialize as 300:\n{rendered}"
+        );
         assert_eq!(
             Config::from_toml_str(&rendered).expect("default TOML should parse"),
             Config::default()
