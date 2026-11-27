@@ -1,0 +1,13 @@
+# Internal agent working docs — excluded from VCS
+# Plans, agent discussions, stage/progress marking live here.
+/docs/plans/
+
+# Rust build output
+/target/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
