@@ -5,6 +5,7 @@
 //! `bRAGa` builds, maintains, and queries a retrieval index over local files; it never
 //! generates text. This crate is under active development and is not audited.
 //!
-//! Stage 1 provides only the configuration surface; indexing and storage land in later stages.
+//! Stage 2 provides the configuration model and its layered environment resolution; indexing and
+//! storage land in later stages.
 
 pub mod config;
