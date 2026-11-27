@@ -5,4 +5,14 @@ queries a retrieval index over your files; it never generates text.
 
 > **Status: early development. Not audited.** See `SECURITY.md` for the security posture.
 
-Full documentation and build instructions land in the first bootstrap pull request.
+## Build and test
+
+Requires Rust 1.85 or newer (edition 2024).
+
+```sh
+cargo build
+cargo test
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps
+```
