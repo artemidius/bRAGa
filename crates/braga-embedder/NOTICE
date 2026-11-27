@@ -1,0 +1,14 @@
+bRAGa embedder — third-party attribution
+
+This crate links the following components alongside the Apache-2.0 code of
+the bRAGa project.
+
+ureq
+  Copyright (c) 2019 Martin Algesten and contributors.
+  Licensed under MIT OR Apache-2.0.
+  Upstream: https://github.com/algesten/ureq
+
+serde_json
+  Copyright (c) Erick Tryzelaar and David Tolnay.
+  Licensed under MIT OR Apache-2.0.
+  Upstream: https://github.com/serde-rs/json
