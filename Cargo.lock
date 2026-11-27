@@ -21,6 +21,7 @@ dependencies = [
 name = "braga-storage"
 version = "0.1.0"
 dependencies = [
+ "getrandom",
  "libsqlite3-sys",
  "rusqlite",
  "sqlite-vec",

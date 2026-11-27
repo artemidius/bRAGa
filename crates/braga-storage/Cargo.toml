@@ -12,6 +12,7 @@ description.workspace = true
 publish = false
 
 [dependencies]
+getrandom = "0.4"
 libsqlite3-sys = "=0.40.0"
 rusqlite = { version = "0.43", default-features = false, features = ["bundled-sqlcipher"] }
 sqlite-vec = "=0.1.9"
