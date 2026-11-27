@@ -1,0 +1,9 @@
+bRAGa chunker — third-party attribution
+
+This crate links the following components alongside the Apache-2.0 code of
+the bRAGa project.
+
+sha2
+  Copyright (c) The RustCrypto Developers.
+  Licensed under MIT OR Apache-2.0.
+  Upstream: https://github.com/RustCrypto/hashes
