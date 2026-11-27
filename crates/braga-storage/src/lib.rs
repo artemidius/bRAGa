@@ -44,4 +44,4 @@ mod schema;
 mod store;
 
 pub use key::{Key, KeyFileError};
-pub use store::{Store, StoreError};
+pub use store::{FileRow, NewChunk, Store, StoreError};

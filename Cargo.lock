@@ -21,7 +21,11 @@ dependencies = [
 name = "braga"
 version = "0.1.0"
 dependencies = [
+ "braga-chunker",
+ "braga-storage",
+ "rusqlite",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
 ]
