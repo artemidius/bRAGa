@@ -3,6 +3,6 @@ Upstream-Name: bRAGa
 Upstream-Contact: Artem Sborets and contributors
 Source: https://github.com/artemidius/bRAGa
 
-Files: LICENSE README.md .gitignore SECURITY.md AGENTS.md NOTICE CHANGELOG.md
+Files: LICENSE README.md .gitignore SECURITY.md AGENTS.md NOTICE CHANGELOG.md crates/braga-storage/NOTICE
 Copyright: 2026 Artem Sborets and contributors
 License: Apache-2.0

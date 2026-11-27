@@ -16,7 +16,7 @@ Rust is installed via rustup; run `source ~/.cargo/env` first if `cargo` is not 
 
 ## Conventions
 
-- Edition 2024; minimum supported Rust version is 1.85.
+- Edition 2024; minimum supported Rust version is 1.89.
 - rustfmt: `max_width = 100`, `use_small_heuristics = "Max"`, `imports_granularity = "Crate"`.
 - Every source and config file carries an `SPDX-License-Identifier: Apache-2.0` header.
 - Apache-2.0 only. Never add AGPL code or feature-gated AGPL paths.

@@ -7,7 +7,7 @@ queries a retrieval index over your files; it never generates text.
 
 ## Build and test
 
-Requires Rust 1.85 or newer (edition 2024).
+Requires Rust 1.89 or newer (edition 2024).
 
 ```sh
 cargo build

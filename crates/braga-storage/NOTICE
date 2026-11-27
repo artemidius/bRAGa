@@ -1,0 +1,25 @@
+bRAGa storage spike — third-party attribution
+
+This crate statically links the following components alongside the Apache-2.0
+code of the bRAGa project.
+
+SQLCipher
+  Copyright (c) 2008-2012 Zetetic LLC and contributors.
+  SQLCipher is distributed through the `sqlcipher-src` crate
+  (https://crates.io/crates/sqlcipher-src), version 420.0.0, a third-party
+  packaging fork of the official SQLCipher 4.20.0 sources. That crate is
+  licensed as `MIT AND BSD-3-Clause AND blessing AND WTFPL`; the `blessing`
+  and `WTFPL` terms come from the bundled libtomcrypt cryptography library.
+  All of these licenses are permissive and Apache-2.0-compatible. The release's
+  SHA256SUMS cover the vendored amalgamation.
+  Upstream: https://github.com/sqlcipher/sqlcipher
+
+sqlite-vec
+  Copyright (c) Alex Garcia and contributors.
+  Licensed under MIT or Apache-2.0.
+  Upstream: https://github.com/asg017/sqlite-vec
+
+rusqlite / libsqlite3-sys
+  Copyright (c) The rusqlite developers.
+  Licensed under MIT.
+  Upstream: https://github.com/rusqlite/rusqlite
