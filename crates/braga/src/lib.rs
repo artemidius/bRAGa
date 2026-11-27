@@ -13,9 +13,11 @@
 //! [`embedding`] closes the write half of the retrieval pipeline: it cache-filters chunks against
 //! `model_registry` and the per-dimension `vec0` table, embeds the missing ones through a
 //! [`braga_embedder::Embedder`], and stores each vector with
-//! [`Store::insert_embedding`](braga_storage::Store::insert_embedding).
+//! [`Store::insert_embedding`](braga_storage::Store::insert_embedding). [`retrieval`] is its query
+//! counterpart: a `vec0` KNN and an FTS5 keyword search fused with reciprocal rank fusion.
 
 pub mod config;
 pub mod embedding;
+pub mod retrieval;
 pub mod scanner;
 pub mod status;
