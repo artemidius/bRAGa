@@ -1,8 +1,9 @@
 # Releasing bRAGa
 
 Releases are cut by pushing a `v*` tag. `.github/workflows/release.yml` then builds every artifact
-and attaches them to a GitHub Release. Registry publishing is a follow-up (see the end of this file);
-the pipeline itself needs no secrets.
+and attaches them to a GitHub Release. Registry publishing is wired but dormant: each publish job is
+skipped when its secrets are absent (see [Publishing secrets](#publishing-secrets)), so the pipeline
+needs no secrets to produce a complete, green release.
 
 ## Cut a release
 
@@ -43,16 +44,33 @@ The tag itself is the Go release (no artifact is published to the Go module prox
 
 Musl/Alpine is not built: no musl cdylib exists, so Alpine users install from source.
 
-## Secrets
+## Publishing secrets
 
-None are required for the build and GitHub Release. Future registry publishing should gate each job
-on `secrets.X != ''` so a fork or a token-less run stays green:
+Publishing is off by default: `release.yml` runs a `detect-secrets` job that exposes only booleans
+for secret presence, and each publish job is skipped when its secrets are absent. A fork, a
+token-less tag push, or a dry `workflow_dispatch` therefore still produces a complete, green release
+with every artifact on the GitHub Release. Set secrets under
+**Settings → Secrets and variables → Actions**.
 
-| secret(s) | registry |
-| --- | --- |
-| `PYPI_TOKEN` | PyPI |
-| `NUGET_API_KEY` | NuGet.org |
-| `MAVEN_USERNAME` + `MAVEN_PASSWORD` (+ GPG key for Central) | Maven Central |
+| secret(s) | publish job | registry | absent → |
+| --- | --- | --- | --- |
+| `PYPI_API_TOKEN` | `pypi-publish` | PyPI | job skipped |
+| `NUGET_API_KEY` | `nuget-publish` | NuGet.org | job skipped |
+| `MAVEN_USERNAME` + `MAVEN_PASSWORD` | `maven-publish` | Maven Central | job skipped |
+| `GPG_PRIVATE_KEY` + `GPG_PASSPHRASE` | `maven-publish` | Maven Central (signing) | job skipped |
+
+- `PYPI_API_TOKEN` is a PyPI API token scoped to the `braga` project.
+- `NUGET_API_KEY` is a NuGet.org API key with push permission.
+- `MAVEN_USERNAME` / `MAVEN_PASSWORD` are Sonatype Central Portal credentials.
+- `GPG_PRIVATE_KEY` is an ASCII-armored private key and `GPG_PASSPHRASE` its passphrase. `build.gradle`
+  signs only when the key is present, so `./gradlew build` and `./gradlew check` work with no GPG
+  setup.
+
+The publish jobs run on `ubuntu-latest`, so the Maven artifact is the linux-x64 jar; the macOS arm64
+jar remains a GitHub Release asset. `./gradlew publish` signs (when `GPG_PRIVATE_KEY` is set) and
+uploads the jar to Sonatype's OSSRH-compatible staging endpoint. A full Maven Central release still
+needs sources/javadoc artifacts and the Portal release step, so JitPack — which builds `jvm/` from the
+tag with no secrets — remains the supported Maven channel until that lands.
 
 ## Out of scope / follow-ups
 
@@ -62,6 +80,7 @@ on `secrets.X != ''` so a fork or a token-less run stays green:
 - **crates.io** — the Apache crates are not published yet. `braga-extra` is **AGPL-3.0-or-later** and
   must never be published by this Apache-2.0 pipeline; publishing it is a separate, deliberate
   follow-up.
-- **Registry publish jobs** — PyPI, NuGet, and Maven publishing are not yet wired into `release.yml`.
-  Until Maven Central signing lands, Maven consumers can use JitPack, which builds from the tag with
-  no secrets.
+- **Maven Central** — `./gradlew publish` uploads a signed jar to Sonatype's OSSRH-compatible staging
+  endpoint. Completing a Central release (sources/javadoc artifacts, Portal upload) is a follow-up;
+  until then JitPack builds `jvm/` from the tag with no secrets. Only the linux-x64 jar is published;
+  the macOS arm64 jar is a GitHub Release asset.
