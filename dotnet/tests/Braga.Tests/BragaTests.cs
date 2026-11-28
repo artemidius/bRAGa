@@ -154,6 +154,9 @@ public sealed class BragaTests
     [Fact]
     public unsafe void NoCrash()
     {
+        // These calls bypass the typed facade, so pin the library before touching the raw ABI.
+        NativeLib.EnsureLoaded();
+
         Assert.Equal(BragaResult.InvalidArg, BragaResultExtensions.FromCode(NativeMethods.braga_close(0)));
         Assert.Equal(BragaStatus.Error, BragaStatusExtensions.FromCode(NativeMethods.braga_status(0)));
         Assert.Equal(BragaResult.InvalidArg, BragaResultExtensions.FromCode(NativeMethods.braga_update(0, null, 0)));
