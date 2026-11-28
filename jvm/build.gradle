@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: Apache-2.0
+
+plugins {
+    id 'java'
+}
+
+group = 'dev.braga'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def osDir = osName.contains('mac') ? 'macos' : (osName.contains('linux') ? 'linux' : null)
+def archName = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+def archDir = (archName == 'aarch64' || archName == 'arm64') ? 'aarch64'
+        : ((archName == 'x86_64' || archName == 'amd64') ? 'x86_64' : null)
+if (osDir == null || archDir == null) {
+    throw new GradleException("braga-jvm supports macOS and Linux on aarch64/x86_64; got ${osName}/${archName}")
+}
+
+def libExt = osDir == 'macos' ? 'dylib' : 'so'
+def javaHome = System.getenv('JAVA_HOME') ?: System.getProperty('java.home')
+def jniPlatform = osDir == 'macos' ? 'darwin' : 'linux'
+def rpath = osDir == 'macos' ? '@loader_path' : '$ORIGIN'
+
+def rustLib = layout.projectDirectory.file("../target/release/libbraga_ffi.${libExt}")
+def nativeBuildDir = layout.buildDirectory.dir('native')
+def stagedRustLib = layout.buildDirectory.file("native/libbraga_ffi.${libExt}")
+def shimLib = layout.buildDirectory.file("native/libbraga_jni.${libExt}")
+def nativeResourceDir = layout.projectDirectory.dir("src/main/resources/native/${osDir}-${archDir}")
+
+// Runs one external command and fails the build with its output when it exits non-zero.
+def runCommand = { List<String> argv ->
+    def process = new ProcessBuilder(argv).redirectErrorStream(true).start()
+    def output = process.inputStream.getText('UTF-8')
+    def status = process.waitFor()
+    if (status != 0) {
+        throw new GradleException("${argv.join(' ')} failed with exit code ${status}:\n${output}")
+    }
+    return output
+}
+
+// Stage the cdylib next to the shim. Cargo records an absolute install name, so on macOS the
+// staged copy is re-identified as @loader_path/libbraga_ffi.dylib before the shim links it.
+tasks.register('stageRustLib') {
+    description = 'Copy the Rust cdylib into build/native and make its install name relocatable.'
+    inputs.file(rustLib)
+    outputs.file(stagedRustLib)
+    doLast {
+        def target = stagedRustLib.get().asFile
+        target.parentFile.mkdirs()
+        java.nio.file.Files.copy(
+                rustLib.asFile.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        if (osDir == 'macos') {
+            runCommand(['install_name_tool', '-id', '@loader_path/libbraga_ffi.dylib', target.absolutePath])
+        }
+    }
+}
+
+tasks.register('compileJni', Exec) {
+    description = 'Compile the JNI shim against <jni.h> and the frozen braga.h.'
+    dependsOn 'stageRustLib'
+    inputs.file('src/main/c/braga_jni.c')
+    inputs.file('../crates/braga-ffi/include/braga.h')
+    inputs.file(stagedRustLib)
+    outputs.file(shimLib)
+    doFirst {
+        def target = shimLib.get().asFile
+        target.parentFile.mkdirs()
+        commandLine([
+                'cc', '-std=c99', '-O2', '-fPIC', '-shared',
+                "-I${javaHome}/include",
+                "-I${javaHome}/include/${jniPlatform}",
+                "-I${projectDir}/../crates/braga-ffi/include",
+                "${projectDir}/src/main/c/braga_jni.c",
+                "-L${nativeBuildDir.get().asFile.absolutePath}",
+                '-lbraga_ffi',
+                "-Wl,-rpath,${rpath}",
+                '-o', target.absolutePath,
+        ])
+    }
+}
+
+// Both libraries are packaged under native/<os>-<arch>/ so the runtime can extract them together.
+tasks.register('copyNativeLib', Copy) {
+    dependsOn 'compileJni'
+    from(stagedRustLib)
+    from(shimLib)
+    into(nativeResourceDir)
+}
+
+tasks.named('processResources') {
+    dependsOn 'copyNativeLib'
+}
+
+tasks.named('clean') {
+    delete nativeResourceDir
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
+}
