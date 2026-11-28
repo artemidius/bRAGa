@@ -142,3 +142,18 @@ builder/derive/lex stack with anstream/anstyle; ureq's HTTP stack
 (ureq-proto/http/httparse) and its rustls TLS stack (rustls/ring/
 rustls-webpki/webpki-roots/untrusted); serde_json/itoa/memchr; and the
 ICU/Unicode-3.0 crates pulled in by url/idna.
+
+AGPL-3.0-or-later component
+===========================
+
+`crates/braga-extra/**` is a separate component licensed under the GNU Affero
+General Public License, version 3 or later. It is not part of the Apache-2.0
+licensed core and is not linked into the Apache-2.0 crates; the dependency runs
+from `braga-extra` to `braga`/`braga-storage`, never the other way.
+
+The full license text is in `crates/braga-extra/LICENSE`; the component's
+attribution is in `crates/braga-extra/NOTICE`.
+
+The Apache-2.0 crates `braga`, `braga-chunker`, `braga-embedder`, and
+`braga-storage` remain under Apache-2.0. No AGPL code, feature flag, or
+feature-gated path exists in those crates.

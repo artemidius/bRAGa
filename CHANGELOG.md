@@ -24,3 +24,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stage 7b retrieval: embedding cache, `vec0` vector search, FTS5 keyword search, and RRF fusion.
 - Stage 7c doctor: six-check claims verifier with machine-readable JSON output.
 - Stage 8 CLI: `braga init|scan|query|doctor` and off-by-default `tracing` telemetry.
+- Stage 12c: opt-in blind index in `braga-extra::blind` for token-membership lookup, with the
+  documented leakage table and an automatic rebuild during `rekey`.
+- Licensing: `braga-extra` is `AGPL-3.0-or-later`; its CLA (`crates/braga-extra/CLA.md`) keeps the
+  commercial license available, and the Apache-2.0 crates are unchanged.

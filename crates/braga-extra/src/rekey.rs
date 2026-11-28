@@ -3,10 +3,12 @@
 //! Master-key rotation: read every record under the old key, rewrite it under the new one.
 //!
 //! [`rekey`] rewrites `chunks.content` and `encrypted_embeddings.ciphertext` in one `SQLite`
-//! transaction. It is transactional at the `SQLite` layer only: a process crash rolls the database
-//! back, but the caller is responsible for persisting the new master key once the call returns
-//! (and for keeping the old one until then). There is no in-database key marker, so a mixed
-//! rewrite fails the AEAD tag rather than silently exposing plaintext.
+//! transaction. When the opt-in `blind_index` table exists it is rebuilt in the same transaction,
+//! because its token hashes depend on the master key. It is transactional at the `SQLite` layer
+//! only: a process crash rolls the database back, but the caller is responsible for persisting the
+//! new master key once the call returns (and for keeping the old one until then). There is no
+//! in-database key marker, so a mixed rewrite fails the AEAD tag rather than silently exposing
+//! plaintext.
 
 use braga::{
     config::Config,
@@ -16,6 +18,7 @@ use braga_storage::Key;
 use rusqlite::params;
 
 use crate::{
+    blind,
     crypto::{XChachaEncryptor, chunk_aad, embedding_aad},
     db,
     error::Result,
@@ -35,7 +38,9 @@ pub struct RekeyOutcome {
 ///
 /// The database itself is opened with `db_key` (the `SQLCipher` key), which is separate from the
 /// AEAD master key. All chunk rows are read and re-sealed first, then all encrypted embedding rows,
-/// and the whole rewrite commits or rolls back as one transaction.
+/// and the whole rewrite commits or rolls back as one transaction. When `blind_index` exists, its
+/// postings are deleted and rewritten from the decrypted text under the new index key in the same
+/// transaction, so a rotation never leaves a stale index behind.
 ///
 /// # Errors
 ///
@@ -52,6 +57,15 @@ pub fn rekey(
     let connection = db::open(&config.storage.path, db_key)?;
     let transaction = connection.unchecked_transaction()?;
 
+    let blind_key = if db::has_table(&transaction, "blind_index")? {
+        Some(blind::derive_index_key(new)?)
+    } else {
+        None
+    };
+    if blind_key.is_some() {
+        transaction.execute("DELETE FROM blind_index", [])?;
+    }
+
     let chunks = {
         let mut statement = transaction.prepare("SELECT id, content FROM chunks ORDER BY rowid")?;
         statement
@@ -62,6 +76,12 @@ pub fn rekey(
         let ciphertext = decode_hex(&stored).ok_or(SeamError::Decrypt)?;
         let aad = chunk_aad(&chunk_id);
         let plaintext = old_encryptor.decrypt(&aad, &ciphertext)?;
+        if let Some(index_key) = &blind_key {
+            let text = std::str::from_utf8(&plaintext).map_err(|_| {
+                crate::ExtraError::InvalidData { reason: "chunk plaintext is not UTF-8" }
+            })?;
+            blind::insert_postings(&transaction, &**index_key, &chunk_id, text)?;
+        }
         let rewritten = new_encryptor.encrypt(&aad, &plaintext)?;
         transaction.execute(
             "UPDATE chunks SET content = ?1 WHERE id = ?2",

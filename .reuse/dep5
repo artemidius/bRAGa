@@ -6,3 +6,7 @@ Source: https://github.com/artemidius/bRAGa
 Files: LICENSE README.md .gitignore SECURITY.md AGENTS.md NOTICE CHANGELOG.md Cargo.lock docs/threat-model.md crates/braga-chunker/NOTICE crates/braga-embedder/NOTICE crates/braga-storage/NOTICE
 Copyright: 2026 Artem Sborets and contributors
 License: Apache-2.0
+
+Files: crates/braga-extra/**
+Copyright: 2026 Artem Sborets and contributors
+License: AGPL-3.0-or-later

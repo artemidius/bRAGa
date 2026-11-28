@@ -16,14 +16,19 @@
 //!   O(corpus) per query.
 //! * [`update()`] reuses `braga::scanner` and `braga::embedding` unchanged over an encryptor-injected
 //!   store, so the write pipeline keeps its cache and pinning behavior.
-//! * [`rekey()`] re-encrypts every record from one master key to another in one `SQLite` transaction.
+//! * [`rekey()`] re-encrypts every record from one master key to another in one `SQLite` transaction
+//!   and rebuilds the opt-in blind index when one exists.
+//! * [`build`] and [`search`] implement an opt-in blind index: truncated keyed token hashes for
+//!   membership lookups, off until [`build`] is called. Its leakage table is documented in the
+//!   [`blind`] module; it is not a way to search ciphertext and makes no such promise.
 //! * [`status()`] reads counts and never decrypts a record; it needs only the storage key, not the
 //!   AEAD master key.
 //!
 //! # What it does not promise
 //!
-//! Extra mode does not make ciphertext searchable and makes no nearest-neighbour claim about
-//! ciphertext. A query must decrypt candidate vectors in memory to score them, so the host process
+//! Extra mode has no approximate-nearest-neighbour search over ciphertext and no general
+//! substring or phrase search. A query must decrypt candidate vectors in memory to score them, so
+//! the host process
 //! and its memory are inside the trust boundary; a memory dump or `ptrace` recovery is out of scope
 //! in the same way it is for the base mode. Metadata (file paths, content hashes, chunk offsets,
 //! line numbers, and the model registry) is not covered by the AEAD.
@@ -49,6 +54,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod blind;
 pub mod crypto;
 pub mod key;
 pub mod rekey;
@@ -58,6 +64,7 @@ pub mod update;
 mod db;
 mod error;
 
+pub use blind::{BlindHit, BlindIndexOutcome, TOKEN_LEN, build, search};
 pub use braga_embedder::Embedder;
 pub use crypto::XChachaEncryptor;
 pub use error::{ExtraError, Result};
