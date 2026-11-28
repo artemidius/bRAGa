@@ -4,7 +4,7 @@
 
 use rusqlite::params;
 
-use super::{ChunkRow, Store, StoreError, VectorHit};
+use super::{Store, StoreError, VectorHit};
 
 impl Store {
     /// Runs a top-k KNN search against the `dim` dimension's `vec0` table.
@@ -16,16 +16,24 @@ impl Store {
     /// The table is scoped to one model by the stage's one-model-per-collection invariant, so no
     /// `model` filter is applied: `vec0` rejects auxiliary-column constraints in a KNN query.
     ///
+    /// `vec0` cannot rank ciphertext, so extra mode has no in-SQL KNN path and fails closed with
+    /// [`StoreError::SeamUnavailable`]; `braga-extra` decrypts through
+    /// [`Store::list_embeddings`](crate::Store::list_embeddings) and scores in memory instead.
+    ///
     /// # Errors
     ///
     /// Returns [`StoreError::Backend`] if `dim`'s table does not exist, the vector width does not
-    /// match it, or `SQLite` rejects the query.
+    /// match it, or `SQLite` rejects the query, and [`StoreError::SeamUnavailable`] when an
+    /// encryptor is configured.
     pub fn vector_search(
         &self,
         dim: u32,
         query: &[f32],
         top_k: u32,
     ) -> Result<Vec<VectorHit>, StoreError> {
+        if self.encryptor.is_some() {
+            return Err(StoreError::SeamUnavailable);
+        }
         let bytes: Vec<u8> = query.iter().flat_map(|value| value.to_le_bytes()).collect();
         let mut statement = self.conn.prepare(&format!(
             "SELECT rowid, distance FROM \"embeddings_d{dim}\"
@@ -43,10 +51,17 @@ impl Store {
     /// [`StoreError::Backend`]. The result order follows FTS5's `rank` (`bm25`, ascending), which is
     /// all the fusion needs.
     ///
+    /// Extra mode never populates `chunks_fts`, so keyword search fails closed with
+    /// [`StoreError::SeamUnavailable`] instead of returning an empty, misleading result.
+    ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Backend`] if the expression is invalid or `SQLite` rejects the query.
+    /// Returns [`StoreError::Backend`] if the expression is invalid or `SQLite` rejects the query,
+    /// and [`StoreError::SeamUnavailable`] when an encryptor is configured.
     pub fn fts_search(&self, query: &str, top_k: u32) -> Result<Vec<i64>, StoreError> {
+        if self.encryptor.is_some() {
+            return Err(StoreError::SeamUnavailable);
+        }
         let mut statement = self.conn.prepare(
             "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?1 ORDER BY rank LIMIT ?2",
         )?;
@@ -54,35 +69,24 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
     }
 
-    /// Reads the chunks for `rowids`, joined to their file paths.
+    /// Rebuilds the `chunks_fts` index from the `chunks` content table.
     ///
-    /// Rows come back in ascending `rowid` order, so a caller holding a sorted rowid list can pair
-    /// them positionally. Empty input returns an empty vector without querying, and the dynamic
-    /// `IN` list is bounded by the caller's `top_k`.
+    /// The per-file methods maintain the index incrementally; this is the consistency-repair
+    /// primitive for chunk rows mutated behind the index's back, the future `doctor` invariant, and
+    /// the proof that the external-content linkage is wired correctly.
+    ///
+    /// Extra mode never populates `chunks_fts`, so a rebuild fails closed with
+    /// [`StoreError::SeamUnavailable`] rather than indexing ciphertext.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Backend`] if `SQLite` rejects the query.
-    pub fn chunk_metadata(&self, rowids: &[i64]) -> Result<Vec<ChunkRow>, StoreError> {
-        if rowids.is_empty() {
-            return Ok(Vec::new());
+    /// Returns [`StoreError::Backend`] if `SQLite` rejects the rebuild, and
+    /// [`StoreError::SeamUnavailable`] when an encryptor is configured.
+    pub fn refresh_fts(&self) -> Result<(), StoreError> {
+        if self.encryptor.is_some() {
+            return Err(StoreError::SeamUnavailable);
         }
-        let placeholders = (1..=rowids.len()).map(|index| format!("?{index}")).collect::<Vec<_>>();
-        let mut statement = self.conn.prepare(&format!(
-            "SELECT c.id, f.path, c.line_start, c.line_end, c.content
-             FROM chunks c JOIN files f ON f.id = c.file_id
-             WHERE c.rowid IN ({}) ORDER BY c.rowid",
-            placeholders.join(", ")
-        ))?;
-        let rows = statement.query_map(rusqlite::params_from_iter(rowids), |row| {
-            Ok(ChunkRow {
-                chunk_id: row.get(0)?,
-                path: row.get(1)?,
-                line_start: row.get(2)?,
-                line_end: row.get(3)?,
-                content: row.get(4)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+        self.conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')", [])?;
+        Ok(())
     }
 }

@@ -24,3 +24,5 @@ pub mod embedding;
 pub mod retrieval;
 pub mod scanner;
 pub mod status;
+
+pub use braga_storage::seam;

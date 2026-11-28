@@ -2,15 +2,19 @@
 
 //! The encrypted [`Store`] facade over `SQLCipher`.
 
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use rusqlite::{Connection, ffi};
 
+use crate::seam::{Aad, ChunkEncryptor, RecordKind, SeamError};
+
+mod builder;
 mod error;
 mod query;
 mod read;
 mod write;
 
+pub use builder::StoreBuilder;
 pub use error::StoreError;
 
 /// Entry-point type expected by `sqlite3_auto_extension`.
@@ -107,6 +111,91 @@ pub struct ChunkRow {
 /// It is not implemented here; `braga-extra` defines the rotation contract first.
 pub struct Store {
     conn: Connection,
+    encryptor: Option<Arc<dyn ChunkEncryptor>>,
+}
+
+/// The single collection name carried in AAD by the v1 store.
+const COLLECTION: &str = "default";
+
+/// Builds the AAD binding for one chunk-content record.
+fn chunk_aad(chunk_id: &[u8]) -> Aad {
+    Aad {
+        collection: COLLECTION.to_owned(),
+        model: None,
+        chunk_id: chunk_id.to_vec(),
+        kind: RecordKind::Chunk,
+    }
+}
+
+/// Builds the AAD binding for one embedding record.
+fn embedding_aad(model: &str, chunk_id: &[u8]) -> Aad {
+    Aad {
+        collection: COLLECTION.to_owned(),
+        model: Some(model.to_owned()),
+        chunk_id: chunk_id.to_vec(),
+        kind: RecordKind::Embedding,
+    }
+}
+
+/// Encrypts chunk text and hex-encodes it for the `TEXT` column of `chunks`.
+fn seal_text(
+    encryptor: &dyn ChunkEncryptor,
+    aad: &Aad,
+    plaintext: &str,
+) -> Result<String, StoreError> {
+    Ok(encode_hex(&encryptor.encrypt(aad, plaintext.as_bytes())?))
+}
+
+/// Hex-decodes and decrypts one `chunks.content` value.
+fn open_text(
+    encryptor: &dyn ChunkEncryptor,
+    aad: &Aad,
+    stored: &str,
+) -> Result<String, StoreError> {
+    let ciphertext = decode_hex(stored).ok_or(StoreError::Seam(SeamError::Decrypt))?;
+    let plaintext = encryptor.decrypt(aad, &ciphertext)?;
+    String::from_utf8(plaintext).map_err(|_| StoreError::Seam(SeamError::Decrypt))
+}
+
+/// Encodes bytes as lowercase hex, the conservative `TEXT`-column representation.
+fn encode_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(DIGITS[usize::from(byte >> 4)] as char);
+        encoded.push(DIGITS[usize::from(byte & 0x0F)] as char);
+    }
+    encoded
+}
+
+/// Decodes hex, returning `None` for an odd length or a non-hex digit.
+fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(text.len() / 2);
+    for pair in text.as_bytes().as_chunks::<2>().0 {
+        let high = char::from(pair[0]).to_digit(16)?;
+        let low = char::from(pair[1]).to_digit(16)?;
+        decoded.push(u8::try_from(high * 16 + low).ok()?);
+    }
+    Some(decoded)
+}
+
+impl Store {
+    /// Whether the lazily-created `encrypted_embeddings` table exists yet.
+    fn has_encrypted_embeddings(&self) -> Result<bool, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sqlite_master
+                     WHERE type = 'table' AND name = 'encrypted_embeddings'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(StoreError::from)
+    }
 }
 
 /// Validates the `vec0` dimension and distance metric accepted by
