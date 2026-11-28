@@ -29,12 +29,15 @@ create a GitHub Release: a Release must attach to a tag.
 
 | artifact | job | notes |
 | --- | --- | --- |
-| `braga` CLI (`braga.exe` on Windows) | `native` | macOS arm64, Linux x64, Windows x64; also smoke-tested with `--version` |
+| `braga-macos-arm64`, `braga-linux-x64`, `braga-windows-x64.exe` | `native` | platform-suffixed CLI binaries; also smoke-tested with `--version` |
 | `braga_ffi` cdylib (`.dylib` / `.so` / `.dll`) | `native` | the frozen C ABI both wrappers load |
-| platform-tagged Python wheels | `python-wheels` | cibuildwheel, `cp310-*`, macOS/Linux/Windows |
-| Python sdist | `python-sdist` | source only; installed wheels build the cdylib with `cargo` |
+| platform-tagged Python wheels | `python-wheels` | cibuildwheel, `cp310`–`cp313`, macOS/Linux/Windows |
 | JVM jars | `jvm` | `linux-x64` and `macos-arm64`; the Windows jar is deferred until `build.gradle` has a Windows path |
 | .NET nupkg | `dotnet` | contains all three RIDs (`osx-arm64`, `linux-x64`, `win-x64`) |
+
+The release ships wheels only, no sdist: a source tarball would lack the Cargo workspace and cdylib, so
+it cannot be installed standalone. Installing from a checkout (`pip install ./python`) still works
+where `cargo` is available and compiles the cdylib on demand.
 
 The tag itself is the Go release (no artifact is published to the Go module proxy).
 
