@@ -146,7 +146,7 @@ For sensitive data, **`braga-extra`** adds per-chunk **XChaCha20-Poly1305** encr
 ## Platforms
 
 - **Core + CLI:** macOS, Linux, Windows.
-- **Wrappers:** Python and Go available now; JVM, .NET, and Swift on the roadmap — all on one
+- **Wrappers:** Python, Go, and JVM available now; .NET and Swift on the roadmap — all on one
   frozen C API.
 
 ## License
