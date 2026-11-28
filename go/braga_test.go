@@ -51,9 +51,8 @@ func TestRoundTrip(t *testing.T) {
 	if got := lib.Status(); got != StatusUpToDate {
 		t.Fatalf("Status after open = %s, want UP_TO_DATE", got)
 	}
-	if _, err := lib.Query(query, 1); err != nil {
-		requireBragaError(t, err, ResultNotFound)
-	}
+	_, err = lib.Query(query, 1)
+	requireBragaError(t, err, ResultNotFound)
 
 	if err := lib.Update(); err != nil {
 		t.Fatalf("Update: %v", err)

@@ -92,7 +92,7 @@ func (b *Braga) Query(text string, topK int) ([]Hit, error) {
 	if text == "" || !utf8.ValidString(text) {
 		return nil, &BragaError{Code: ResultInvalidArg, Message: "text must be non-empty valid UTF-8"}
 	}
-	if topK < 0 || topK > 0xFFFFFFFF {
+	if topK < 0 || uint64(topK) > 0xFFFFFFFF {
 		return nil, &BragaError{Code: ResultInvalidArg, Message: "topK must fit in a uint32"}
 	}
 	code, data, message := _braga_query(live, []byte(text), uint32(topK))
