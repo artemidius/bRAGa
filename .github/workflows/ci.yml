@@ -84,3 +84,15 @@ jobs:
       - run: cargo build --release -p braga-ffi
       - run: ./gradlew test
         working-directory: jvm
+
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - run: cargo build --release -p braga-ffi
+      - run: dotnet test
+        working-directory: dotnet
