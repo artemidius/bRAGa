@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "braga-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+publish = false
+default-run = "braga"
+
+[[bin]]
+name = "braga"
+path = "src/main.rs"
+
+[dependencies]
+braga = { path = "../braga" }
+braga-chunker = { path = "../braga-chunker" }
+braga-embedder = { path = "../braga-embedder" }
+braga-storage = { path = "../braga-storage" }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

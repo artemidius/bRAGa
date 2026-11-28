@@ -232,6 +232,21 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
     }
 
+    /// Reads every chunk's id and content, ordered by ascending `rowid`.
+    ///
+    /// The id is the stored 32-byte `SHA-256` of the chunk bytes. An empty index returns an empty
+    /// vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Backend`] if `SQLite` rejects the query.
+    pub fn all_chunks(&self) -> Result<Vec<(Vec<u8>, String)>, StoreError> {
+        let mut statement = self.conn.prepare("SELECT id, content FROM chunks ORDER BY rowid")?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+    }
+
     /// Upserts `path` and replaces its chunks, in one transaction.
     ///
     /// The file row is upserted first, which bumps `version` and `updated_at`. Its previous chunk
@@ -583,5 +598,52 @@ impl Store {
     /// Returns [`StoreError::Backend`] if `SQLite` cannot close the connection cleanly.
     pub fn close(self) -> Result<(), StoreError> {
         self.conn.close().map_err(|(_, error)| StoreError::from(error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NewChunk, Store};
+    use crate::key::Key;
+
+    #[test]
+    fn all_chunks_is_empty_then_returns_each_chunk_id_and_content() {
+        let dir = tempfile::tempdir().expect("create temporary directory");
+        let store = Store::open(&dir.path().join("braga.sqlite3"), &Key::from_bytes([0x21; 32]))
+            .expect("open store");
+
+        assert_eq!(store.all_chunks().expect("list an empty index"), Vec::new());
+
+        let (first, second) = ([0xA1_u8; 32], [0xB2_u8; 32]);
+        store
+            .sync_file(
+                "a.md",
+                &[0xC3_u8; 32],
+                &[
+                    NewChunk {
+                        id: &first,
+                        byte_offset: 0,
+                        line_start: 1,
+                        line_end: 1,
+                        content: "first chunk",
+                    },
+                    NewChunk {
+                        id: &second,
+                        byte_offset: 10,
+                        line_start: 2,
+                        line_end: 2,
+                        content: "second chunk",
+                    },
+                ],
+            )
+            .expect("sync file");
+
+        assert_eq!(
+            store.all_chunks().expect("list the index"),
+            vec![
+                (first.to_vec(), "first chunk".to_owned()),
+                (second.to_vec(), "second chunk".to_owned()),
+            ]
+        );
     }
 }
