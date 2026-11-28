@@ -129,8 +129,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Bring your own model
 
-Works with any **OpenAI-compatible** API or **Ollama** — local models welcome. The chunks that get
-embedded never leave your machine unless you point it at a remote provider.
+Embeddings are pluggable — pick what fits:
+- **Remote API:** any OpenAI-compatible endpoint.
+- **Local server:** Ollama.
+- **In-process:** embed on your own machine with no server, by implementing the `Embedder` trait
+  (e.g. a `candle` model — experimental).
+
+Chunks only leave your machine when you point them at a remote provider.
 
 ## Encrypted by default
 
