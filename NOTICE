@@ -14,3 +14,131 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+This NOTICE consolidates the attribution previously carried in the crate-level
+NOTICEs under crates/*/NOTICE and is the authoritative list for the workspace.
+Versions below are the locked versions in Cargo.lock; the license expressions
+are the ones reported by `cargo metadata --locked`.
+
+Third-party components linked by the bRAGa binaries
+===================================================
+
+SQLCipher
+  Copyright (c) 2008-2012 Zetetic LLC and contributors.
+  SQLCipher is distributed through the `sqlcipher-src` crate, locked at
+  420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2 (SQLCipher
+  4.20.0, SQLite 3.54.1, libtomcrypt 1.18.2). `sqlcipher-src` is a
+  third-party packaging fork of the official SQLCipher sources.
+  License: MIT AND BSD-3-Clause AND blessing AND WTFPL
+  The `blessing` and `WTFPL` terms come from the bundled libtomcrypt
+  cryptography library. SQLCipher itself is BSD-3-Clause; the full crate
+  expression is the MIT AND BSD-3-Clause AND blessing AND WTFPL combination
+  above, not a bare "BSD" license.
+  Upstream: https://github.com/sqlcipher/sqlcipher
+  Packaging: https://crates.io/crates/sqlcipher-src
+
+sqlite-vec
+  Copyright (c) Alex Garcia and contributors.
+  Version: 0.1.9
+  License: MIT OR Apache-2.0
+  Upstream: https://github.com/asg017/sqlite-vec
+
+rusqlite
+  Copyright (c) The rusqlite developers.
+  Version: 0.43.0
+  License: MIT
+  Upstream: https://github.com/rusqlite/rusqlite
+
+libsqlite3-sys
+  Copyright (c) The rusqlite developers.
+  Version: 0.40.0
+  License: MIT
+  Upstream: https://github.com/rusqlite/rusqlite
+
+Other direct dependencies
+=========================
+
+Component                 Version                        License
+---------                 -------                        -------
+clap                      4.6.10                         MIT OR Apache-2.0
+getrandom                 0.4.3                          MIT OR Apache-2.0
+serde                     1.0.229                        MIT OR Apache-2.0
+serde_json                1.0.154                        MIT OR Apache-2.0
+sha2                      0.10.9                         MIT OR Apache-2.0
+tempfile                  3.27.0                         MIT OR Apache-2.0
+thiserror                 2.0.21                         MIT OR Apache-2.0
+toml                      0.9.12+spec-1.1.0              MIT OR Apache-2.0
+tracing                   0.1.44                         MIT
+tracing-subscriber        0.3.23                         MIT
+ureq                      3.5.2                          MIT OR Apache-2.0
+
+Transitive dependencies
+=======================
+
+Cargo.lock is the authoritative pin for every transitive version. The table
+below groups every license expression present in that lockfile; a component is
+listed only when it helps identify the license family. Platform-specific
+crates (for example windows-sys, r-efi, and wasi) are linked only on the
+targets that need them. Where a crate offers a choice, bRAGa relies on the
+Apache-2.0 or MIT option except where the expression uses AND.
+
+License expression                              Components (representative)
+------------------------------------------------ ----------------------------
+MIT OR Apache-2.0                               anstream, base64, bitflags,
+                                                cfg-if, clap_builder,
+                                                clap_derive, clap_lex, http,
+                                                httparse, itoa, libc, log,
+                                                once_cell, proc-macro2, quote,
+                                                serde_core, serde_derive,
+                                                syn, toml_parser,
+                                                toml_writer, ureq-proto,
+                                                windows-sys, winnow
+Apache-2.0 OR MIT                               equivalent, fastrand,
+                                                indexmap, pin-project-lite,
+                                                utf8_iter, zeroize
+MIT                                             bytes, generic-array,
+                                                libsqlite3-sys, nu-ansi-term,
+                                                rsqlite-vfs, rusqlite,
+                                                sharded-slab, simd-adler32,
+                                                sqlite-wasm-rs, strsim,
+                                                synstructure, tracing,
+                                                tracing-attributes,
+                                                tracing-core, tracing-log,
+                                                tracing-subscriber,
+                                                valuable, zmij
+MIT/Apache-2.0 (legacy notation)                fallible-iterator,
+                                                fallible-streaming-iterator,
+                                                sqlite-vec, vcpkg,
+                                                version_check
+Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT  linux-raw-sys, rustix,
+                                                wasi
+Apache-2.0 AND ISC                              ring
+Apache-2.0 OR ISC OR MIT                        rustls
+ISC                                             rustls-webpki, untrusted
+CDLA-Permissive-2.0                             webpki-roots
+Unicode-3.0                                     icu_collections,
+                                                icu_locale_core,
+                                                icu_normalizer,
+                                                icu_normalizer_data,
+                                                icu_properties,
+                                                icu_properties_data,
+                                                icu_provider, litemap,
+                                                potential_utf, tinystr,
+                                                writeable, yoke, zerofrom,
+                                                zerotrie, zerovec
+Unlicense OR MIT                                memchr
+0BSD OR MIT OR Apache-2.0                       adler2
+MIT OR Zlib OR Apache-2.0                       miniz_oxide
+Zlib                                            zlib-rs
+BSD-3-Clause                                    subtle
+MIT OR Apache-2.0 OR LGPL-2.1-or-later          r-efi
+(MIT OR Apache-2.0) AND Unicode-3.0             unicode-ident
+
+Notable transitive groupings: serde/serde_core/serde_derive;
+toml/toml_datetime/toml_parser/toml_writer/winnow; thiserror/thiserror-impl;
+tempfile/fastrand/rustix/linux-raw-sys; sha2/digest/block-buffer/
+crypto-common/typenum/cpufeatures; getrandom/cfg-if/libc; clap's
+builder/derive/lex stack with anstream/anstyle; ureq's HTTP stack
+(ureq-proto/http/httparse) and its rustls TLS stack (rustls/ring/
+rustls-webpki/webpki-roots/untrusted); serde_json/itoa/memchr; and the
+ICU/Unicode-3.0 crates pulled in by url/idna.
