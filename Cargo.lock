@@ -125,6 +125,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "braga-ffi"
+version = "0.1.0"
+dependencies = [
+ "braga",
+ "braga-chunker",
+ "braga-embedder",
+ "braga-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "braga-storage"
 version = "0.1.0"
 dependencies = [
