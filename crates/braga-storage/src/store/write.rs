@@ -4,22 +4,18 @@
 
 use std::{io, path::Path};
 
-use rusqlite::{Connection, params};
+use rusqlite::params;
 
-use crate::{
-    key::Key,
-    migrations::{MIGRATIONS, apply_migrations},
+use crate::key::Key;
+
+use super::{
+    NewChunk, Store, StoreError, chunk_aad, embedding_aad, seal_text, validate_vec0_parameter,
 };
 
-use super::{NewChunk, Store, StoreError, register_vector_extension, validate_vec0_parameter};
-
 impl Store {
-    /// Opens (or creates) the encrypted database at `path` with `key`.
+    /// Opens (or creates) the encrypted database at `path` with `key` in base mode.
     ///
-    /// The key is applied with `Connection::key`, before any other statement, because `SQLCipher`
-    /// 4.7 and later hard-fails on any statement that precedes it. This keeps the key out of every
-    /// SQL string. `WAL` journalling and foreign keys are enabled afterwards, then the schema
-    /// migrations run inside the encrypted connection.
+    /// This is the shortcut for [`Store::builder`] without an encryptor; base mode is unchanged.
     ///
     /// # Errors
     ///
@@ -28,12 +24,7 @@ impl Store {
     /// [`StoreError::Migration`] when a migration fails, and [`StoreError::Backend`] when `SQLite`
     /// rejects an operation.
     pub fn open(path: &Path, key: &Key) -> Result<Self, StoreError> {
-        register_vector_extension();
-        let conn = Connection::open(path)?;
-        conn.key(None::<&str>, key.as_bytes(), false)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        apply_migrations(&conn, MIGRATIONS)?;
-        Ok(Self { conn })
+        Self::builder().open(path, key)
     }
 
     /// Upserts `path` and replaces its chunks, in one transaction.
@@ -49,9 +40,14 @@ impl Store {
     /// never be observed without its chunks. `unchecked_transaction` is used because the method
     /// takes `&self`; the `Store` owns its only connection, so no transaction is open across calls.
     ///
+    /// In extra mode each chunk's text is encrypted and stored hex-encoded in `chunks.content`, and
+    /// `chunks_fts` is left untouched: the external-content index cannot meaningfully index
+    /// ciphertext, and extra mode is a keyword-search-free mode.
+    ///
     /// # Errors
     ///
-    /// Returns [`StoreError::Backend`] if `SQLite` rejects a statement or the transaction.
+    /// Returns [`StoreError::Backend`] if `SQLite` rejects a statement or the transaction, and
+    /// [`StoreError::Seam`] if the encryptor rejects a chunk.
     pub fn sync_file(
         &self,
         path: &str,
@@ -71,12 +67,19 @@ impl Store {
         let file_id: i64 =
             transaction
                 .query_row("SELECT id FROM files WHERE path = ?1", [path], |row| row.get(0))?;
-        transaction.execute(
-            "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE file_id = ?1)",
-            [file_id],
-        )?;
+        if self.encryptor.is_none() {
+            transaction.execute(
+                "DELETE FROM chunks_fts WHERE rowid IN
+                 (SELECT rowid FROM chunks WHERE file_id = ?1)",
+                [file_id],
+            )?;
+        }
         transaction.execute("DELETE FROM chunks WHERE file_id = ?1", [file_id])?;
         for chunk in chunks {
+            let content = match self.encryptor.as_deref() {
+                Some(encryptor) => seal_text(encryptor, &chunk_aad(chunk.id), chunk.content)?,
+                None => chunk.content.to_owned(),
+            };
             transaction.execute(
                 "INSERT INTO chunks (id, file_id, byte_offset, line_start, line_end, content)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -86,13 +89,15 @@ impl Store {
                     chunk.byte_offset,
                     chunk.line_start,
                     chunk.line_end,
-                    chunk.content
+                    content
                 ],
             )?;
-            transaction.execute(
-                "INSERT INTO chunks_fts (rowid, content) VALUES (?1, ?2)",
-                params![transaction.last_insert_rowid(), chunk.content],
-            )?;
+            if self.encryptor.is_none() {
+                transaction.execute(
+                    "INSERT INTO chunks_fts (rowid, content) VALUES (?1, ?2)",
+                    params![transaction.last_insert_rowid(), chunk.content],
+                )?;
+            }
         }
         transaction.commit()?;
         Ok(())
@@ -101,18 +106,31 @@ impl Store {
     /// Deletes the file `id` together with its chunks and their FTS entries, in one transaction.
     ///
     /// The FTS entries go first for the same reason as in [`Store::sync_file`]; the `chunks` rows
-    /// then follow through `ON DELETE CASCADE`. An unknown `id` is a no-op returning `Ok(())`,
-    /// which keeps the scanner's garbage-collection loop idempotent across `TOCTOU` races.
+    /// then follow through `ON DELETE CASCADE`. Extra mode never populated `chunks_fts`, so it skips
+    /// that step and garbage-collects the file's `encrypted_embeddings` rows in the same
+    /// transaction. An unknown `id` is a no-op returning `Ok(())`, which keeps the scanner's
+    /// garbage-collection loop idempotent across `TOCTOU` races.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::Backend`] if `SQLite` rejects a statement or the transaction.
     pub fn delete_file(&self, id: i64) -> Result<(), StoreError> {
+        let gc_encrypted = self.encryptor.is_some() && self.has_encrypted_embeddings()?;
         let transaction = self.conn.unchecked_transaction()?;
-        transaction.execute(
-            "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE file_id = ?1)",
-            [id],
-        )?;
+        if self.encryptor.is_none() {
+            transaction.execute(
+                "DELETE FROM chunks_fts WHERE rowid IN
+                 (SELECT rowid FROM chunks WHERE file_id = ?1)",
+                [id],
+            )?;
+        }
+        if gc_encrypted {
+            transaction.execute(
+                "DELETE FROM encrypted_embeddings
+                 WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?1)",
+                [id],
+            )?;
+        }
         transaction.execute("DELETE FROM files WHERE id = ?1", [id])?;
         transaction.commit()?;
         Ok(())
@@ -173,10 +191,30 @@ impl Store {
         Ok(())
     }
 
+    /// Lazily creates the side BLOB table that holds ciphertext embedding vectors in extra mode.
+    ///
+    /// `vec0` cannot rank ciphertext, so extra mode stores vectors here instead of in
+    /// `embeddings_d<dim>`; the table is created on first insert, like the `vec0` table, so base
+    /// mode's on-disk schema is unchanged.
+    fn ensure_encrypted_embeddings_table(&self) -> Result<(), StoreError> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS encrypted_embeddings (
+                 chunk_id   BLOB    NOT NULL,
+                 model      TEXT    NOT NULL,
+                 dim        INTEGER NOT NULL,
+                 ciphertext BLOB    NOT NULL,
+                 PRIMARY KEY (chunk_id, model, dim)
+             ) STRICT",
+        )?;
+        Ok(())
+    }
+
     /// Inserts one embedding, resolving `chunks.rowid` from the content hash internally.
     ///
-    /// The vector is bound as little-endian `f32` bytes through `vec_f32`, so no JSON crosses the
-    /// `braga-storage` boundary. The `vec0` rowid equals `chunks.rowid`, the documented join key.
+    /// In base mode the vector is bound as little-endian `f32` bytes through `vec_f32`, so no JSON
+    /// crosses the `braga-storage` boundary; the `vec0` rowid equals `chunks.rowid`, the documented
+    /// join key. In extra mode the same bytes are encrypted and stored in the lazily-created
+    /// `encrypted_embeddings` table instead.
     ///
     /// An unknown `chunk_id` fails closed with [`StoreError::Backend`] *before* the insert:
     /// `sqlite-vec` 0.1.9 auto-assigns a rowid for a `NULL` one, which would otherwise create an
@@ -185,7 +223,8 @@ impl Store {
     /// # Errors
     ///
     /// Returns [`StoreError::Backend`] when the chunk is unknown, the vector width does not match
-    /// the table, or `SQLite` rejects the insert.
+    /// the table, or `SQLite` rejects the insert, and [`StoreError::Seam`] when the encryptor
+    /// rejects the vector.
     pub fn insert_embedding(
         &self,
         chunk_id: &[u8],
@@ -198,6 +237,16 @@ impl Store {
                 row.get(0)
             })?;
         let bytes: Vec<u8> = vector.iter().flat_map(|value| value.to_le_bytes()).collect();
+        if let Some(encryptor) = self.encryptor.as_deref() {
+            self.ensure_encrypted_embeddings_table()?;
+            let ciphertext = encryptor.encrypt(&embedding_aad(model, chunk_id), &bytes)?;
+            self.conn.execute(
+                "INSERT INTO encrypted_embeddings (chunk_id, model, dim, ciphertext)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![chunk_id, model, dim, ciphertext],
+            )?;
+            return Ok(());
+        }
         self.conn.execute(
             &format!(
                 "INSERT INTO \"embeddings_d{dim}\" (rowid, embedding, chunk_id, model, dim)
@@ -205,20 +254,6 @@ impl Store {
             ),
             params![rowid, bytes, chunk_id, model, dim],
         )?;
-        Ok(())
-    }
-
-    /// Rebuilds the `chunks_fts` index from the `chunks` content table.
-    ///
-    /// The per-file methods maintain the index incrementally; this is the consistency-repair
-    /// primitive for chunk rows mutated behind the index's back, the future `doctor` invariant, and
-    /// the proof that the external-content linkage is wired correctly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError::Backend`] if `SQLite` rejects the rebuild.
-    pub fn refresh_fts(&self) -> Result<(), StoreError> {
-        self.conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')", [])?;
         Ok(())
     }
 

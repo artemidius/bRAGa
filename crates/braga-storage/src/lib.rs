@@ -43,5 +43,7 @@ mod migrations;
 mod schema;
 mod store;
 
+pub mod seam;
+
 pub use key::{Key, KeyFileError};
-pub use store::{ChunkRow, FileRow, NewChunk, Store, StoreError, VectorHit};
+pub use store::{ChunkRow, FileRow, NewChunk, Store, StoreBuilder, StoreError, VectorHit};

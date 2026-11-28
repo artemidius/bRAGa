@@ -6,7 +6,7 @@ use std::io;
 
 use thiserror::Error;
 
-use crate::key::KeyFileError;
+use crate::{key::KeyFileError, seam::SeamError};
 
 /// Error returned by [`Store`](super::Store) operations.
 ///
@@ -60,6 +60,15 @@ pub enum StoreError {
         /// The rejected parameter name (`dim` or `metric`).
         parameter: &'static str,
     },
+    /// The crypto seam encryptor rejected or failed a record.
+    #[error("crypto seam: {0}")]
+    Seam(#[from] SeamError),
+    /// The operation is base-mode-only and an encryptor is configured.
+    ///
+    /// `vec0` cannot rank ciphertext and `chunks_fts` is never populated in extra mode, so the
+    /// in-SQL search paths fail closed instead of reading ciphertext.
+    #[error("operation unavailable while a crypto seam encryptor is configured")]
+    SeamUnavailable,
 }
 
 impl From<rusqlite::Error> for StoreError {
