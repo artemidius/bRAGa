@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "braga"
+version = "0.1.0"
+description = "Python bindings for bRAGa, loaded over its frozen C ABI"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Artem Sborets and contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Repository = "https://github.com/artemidius/bRAGa"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+braga = ["py.typed", "_native/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

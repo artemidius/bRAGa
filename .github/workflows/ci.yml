@@ -46,3 +46,15 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: cargo build --release -p braga-ffi
+      - run: python -m pip install -e ./python pytest
+      - run: python -m pytest python/tests -q
