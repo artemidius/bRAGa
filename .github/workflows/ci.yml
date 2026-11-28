@@ -45,7 +45,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps
+      # The `braga` bin target (braga-cli) and lib target (braga) collide on target/doc/braga.
+      - run: cargo doc --no-deps --workspace --exclude braga-cli
 
   python:
     runs-on: ubuntu-latest

@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    name: native (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            name: macos-arm64
+            cli: braga
+            cli_artifact: braga-macos-arm64
+            ffi: libbraga_ffi.dylib
+          - runner: ubuntu-latest
+            name: linux-x64
+            cli: braga
+            cli_artifact: braga-linux-x64
+            ffi: libbraga_ffi.so
+          - runner: windows-latest
+            name: windows-x64
+            cli: braga.exe
+            cli_artifact: braga-windows-x64.exe
+            ffi: braga_ffi.dll
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p braga-cli -p braga-ffi
+      - run: target/release/${{ matrix.cli }} --version
+      # Release assets must have unique names: a bare `braga` would be overwritten on merge.
+      - run: cp target/release/${{ matrix.cli }} target/release/${{ matrix.cli_artifact }}
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: target/release/${{ matrix.cli_artifact }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.name }}
+          path: target/release/${{ matrix.ffi }}
+          if-no-files-found: error
+
+  python-wheels:
+    name: python wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: python -m pip install --upgrade cibuildwheel
+      - run: cibuildwheel python --output-dir python/wheelhouse
+        env:
+          # The manylinux image has no Rust; macOS and Windows hosted runners already do.
+          CIBW_BEFORE_ALL_LINUX: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          CIBW_ENVIRONMENT_LINUX: PATH="$HOME/.cargo/bin:$PATH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: python/wheelhouse/*.whl
+          if-no-files-found: error
+
+  jvm:
+    name: jvm (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux-x64
+          - runner: macos-14
+            name: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with: { distribution: "temurin", java-version: "21" }
+      - run: cargo build --release -p braga-ffi
+      - run: ./gradlew build
+        working-directory: jvm
+      - run: mv jvm/build/libs/*.jar "jvm/build/libs/braga-jvm-0.1.0-${{ matrix.name }}.jar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jvm-${{ matrix.name }}
+          path: jvm/build/libs/braga-jvm-0.1.0-${{ matrix.name }}.jar
+          if-no-files-found: error
+
+  dotnet:
+    name: dotnet nupkg
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-macos-arm64
+          path: staging/osx-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-linux-x64
+          path: staging/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-windows-x64
+          path: staging/win-x64
+      - run: |
+          mkdir -p dotnet/runtimes/osx-arm64/native dotnet/runtimes/linux-x64/native dotnet/runtimes/win-x64/native
+          cp staging/osx-arm64/libbraga_ffi.dylib dotnet/runtimes/osx-arm64/native/
+          cp staging/linux-x64/libbraga_ffi.so dotnet/runtimes/linux-x64/native/
+          cp staging/win-x64/braga_ffi.dll dotnet/runtimes/win-x64/native/
+      - run: dotnet pack src/Braga/Braga.csproj -c Release -o dist
+        working-directory: dotnet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-nupkg
+          path: dotnet/dist/*.nupkg
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    # A Release attaches to a tag. A manual dispatch still builds every artifact, but only the
+    # tag-push run creates the Release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [native, python-wheels, jvm, dotnet]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from setuptools import setup
+from setuptools import Distribution, setup
 from setuptools.command.build_py import build_py as _build_py
 
 ROOT = Path(__file__).resolve().parent
@@ -45,4 +45,11 @@ class build_py(_build_py):  # noqa: N801 - setuptools command class name
         shutil.copy2(source, target / source.name)
 
 
-setup(cmdclass={"build_py": build_py})
+class BinaryDistribution(Distribution):
+    """Forces a platform-specific wheel tag: the cdylib is copied as data, not compiled."""
+
+    def has_ext_modules(self) -> bool:
+        return True
+
+
+setup(cmdclass={"build_py": build_py}, distclass=BinaryDistribution)
