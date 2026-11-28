@@ -2,6 +2,8 @@
 
 plugins {
     id 'java'
+    id 'maven-publish'
+    id 'signing'
 }
 
 group = 'dev.braga'
@@ -117,5 +119,58 @@ tasks.named('test') {
     testLogging {
         events 'failed', 'skipped'
         exceptionFormat = 'full'
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'dev.braga'
+            artifactId = 'braga-jvm'
+            version = project.version
+            from components.java
+            pom {
+                name = 'bRAGa JVM'
+                description = 'JVM wrapper over the bRAGa C ABI; the jar bundles the native library built for the release runner.'
+                url = 'https://github.com/artemidius/bRAGa'
+                licenses {
+                    license {
+                        name = 'Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'artemidius'
+                        name = 'Artem Sborets'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/artemidius/bRAGa.git'
+                    url = 'https://github.com/artemidius/bRAGa'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'central'
+            // Sonatype Central Portal endpoint; the workflow supplies the credentials via env.
+            url = 'https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/'
+            credentials {
+                username = System.getenv('MAVEN_USERNAME')
+                password = System.getenv('MAVEN_PASSWORD')
+            }
+        }
+    }
+}
+
+// Central requires signed artifacts, but signing must stay dormant without a key so that
+// ./gradlew build and ./gradlew test work on any checkout.
+def gpgKey = System.getenv('GPG_PRIVATE_KEY')
+if (gpgKey) {
+    signing {
+        useInMemoryPgpKeys(gpgKey, System.getenv('GPG_PASSPHRASE') ?: '')
+        sign publishing.publications.mavenJava
     }
 }
