@@ -1,7 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [workspace]
-members = ["crates/braga", "crates/braga-chunker", "crates/braga-embedder", "crates/braga-storage"]
+members = [
+    "crates/braga",
+    "crates/braga-chunker",
+    "crates/braga-cli",
+    "crates/braga-embedder",
+    "crates/braga-storage",
+]
 resolver = "3"
 
 [workspace.package]
