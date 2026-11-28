@@ -3,12 +3,13 @@
 //! Private `SQLCipher` access for metadata the frozen seam API does not expose.
 //!
 //! The seam is intentionally closed: chunk text and vectors are only read through [`Store`], and
-//! every such read decrypts under the caller's master key. Three small gaps are metadata, not
-//! secrets, and are handled here with a second connection opened under the same `SQLCipher` key:
+//! every such read decrypts under the caller's master key. Metadata, which is not an AEAD secret,
+//! is handled here with a second connection opened under the same `SQLCipher` key:
 //!
 //! * mapping a scored `chunk_id` to its integer `rowid` so the result can be hydrated through
 //!   [`Store::chunk_metadata`];
 //! * rewriting every ciphertext record in one transaction during [`crate::rekey`];
+//! * maintaining and reading the opt-in `blind_index` postings in [`crate::blind`];
 //! * counting rows for the keyless [`crate::status`] report.
 //!
 //! Nothing in this module decrypts an AEAD record on its own.
