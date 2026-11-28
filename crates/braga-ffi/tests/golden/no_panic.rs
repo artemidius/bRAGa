@@ -8,7 +8,7 @@
 use std::{ffi::c_char, ptr};
 
 use crate::{
-    ffi::{self, BragaResult, BragaStatusCode},
+    ffi::{self, BragaResult, BragaStatusCode, Handle},
     harness::Fixture,
 };
 
@@ -80,7 +80,8 @@ fn open_and_init_reject_invalid_utf8_and_oversized_lengths() {
     let config_len = fixture.config().len();
     let key = fixture.key().as_ptr();
     let key_len = fixture.key().len();
-    let mut handle = ptr::null_mut();
+    // A non-NULL sentinel: every rejected call must overwrite it with NULL, as the header promises.
+    let mut handle = ptr::without_provenance_mut::<Handle>(0x1);
 
     // SAFETY: every pointer is null or borrowed for the call, and every out-parameter is writable.
     unsafe {
@@ -88,18 +89,22 @@ fn open_and_init_reject_invalid_utf8_and_oversized_lengths() {
             ffi::braga_open(INVALID_UTF8.as_ptr(), 2, key, key_len, &raw mut handle),
             BragaResult::InvalidArg
         );
-        assert!(handle.is_null());
+        assert!(handle.is_null(), "an invalid config_path must clear *out_handle");
+
+        handle = ptr::without_provenance_mut::<Handle>(0x1);
         assert_eq!(
             ffi::braga_open(config, config_len, INVALID_UTF8.as_ptr(), 2, &raw mut handle),
             BragaResult::InvalidArg
         );
-        assert!(handle.is_null());
+        assert!(handle.is_null(), "an invalid key_path must clear *out_handle");
+
         // An oversized length is rejected before any read.
+        handle = ptr::without_provenance_mut::<Handle>(0x1);
         assert_eq!(
             ffi::braga_open(config, usize::MAX, ptr::null(), 0, &raw mut handle),
             BragaResult::InvalidArg
         );
-        assert!(handle.is_null());
+        assert!(handle.is_null(), "an oversized path must clear *out_handle");
         // A null out-handle is rejected even with otherwise valid paths.
         assert_eq!(
             ffi::braga_open(config, config_len, key, key_len, ptr::null_mut()),

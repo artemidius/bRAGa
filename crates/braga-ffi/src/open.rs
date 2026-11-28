@@ -28,7 +28,7 @@ static EMPTY: &[u8] = b"\0";
 /// to `BRAGA_KEY_FILE` and then `~/.braga/key`. Both paths must be valid UTF-8.
 ///
 /// The store is opened and closed once before returning, so a wrong key fails here rather than on
-/// the first operation.
+/// the first operation. On error `*out_handle` is null.
 ///
 /// # Safety
 ///
@@ -44,17 +44,19 @@ pub unsafe extern "C" fn braga_open(
     out_handle: *mut *mut BragaHandle,
 ) -> BragaResult {
     guard::guard(|| {
+        if out_handle.is_null() {
+            return Err(Failure::new(BragaResult::InvalidArg, "out_handle must not be NULL"));
+        }
+        // SAFETY: `out_handle` is non-null and writable by contract. Clearing it before any other
+        // work means every error path — including a bad path argument decoded below — leaves the
+        // caller with a null handle.
+        unsafe { out_handle.write(ptr::null_mut()) };
+
         // SAFETY: the caller guarantees each non-null pointer is readable for its length.
         let config_path =
             unsafe { string::optional_path(config_path, config_path_len, "config_path") }?;
         // SAFETY: as above.
         let key_path = unsafe { string::optional_path(key_path, key_path_len, "key_path") }?;
-        if out_handle.is_null() {
-            return Err(Failure::new(BragaResult::InvalidArg, "out_handle must not be NULL"));
-        }
-        // SAFETY: `out_handle` is non-null and writable by contract, so an error path leaves it
-        // explicitly null instead of dangling.
-        unsafe { out_handle.write(ptr::null_mut()) };
 
         let config = Config::resolve(config_path)?;
         let key = Key::load(key_path)?;
